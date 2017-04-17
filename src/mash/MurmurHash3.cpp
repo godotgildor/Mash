@@ -9,6 +9,8 @@
 
 #include "MurmurHash3.h"
 
+#include <immintrin.h>
+#include <inttypes.h>
 //-----------------------------------------------------------------------------
 // Platform-specific functions and macros
 
@@ -264,23 +266,42 @@ void MurmurHash3_x64_128 ( const void * key, const int len,
   const uint64_t c1 = BIG_CONSTANT(0x87c37b91114253d5);
   const uint64_t c2 = BIG_CONSTANT(0x4cf5ad432745937f);
 
+  __mm512i c1c2 = _mm512_set_epi64(0x4cf5ad432745937f, 0x87c37b91114253d5, 0x4cf5ad432745937f, 0x87c37b91114253d5, 0x4cf5ad432745937f, 0x87c37b91114253d5, 0x4cf5ad432745937f, 0x87c37b91114253d5);
+  __mm512i c2c1 = _mm512_set_epi64(0x87c37b91114253d5, 0x4cf5ad432745937f, 0x87c37b91114253d5, 0x4cf5ad432745937f, 0x87c37b91114253d5, 0x4cf5ad432745937f, 0x87c37b91114253d5, 0x4cf5ad432745937f);
+  __mm512i kshifts = _mm512_set_epi64(33, 31, 33, 31, 33, 31, 33, 31);
+
   //----------
   // body
 
   const uint64_t * blocks = (const uint64_t *)(data);
 
-  for(int i = 0; i < nblocks; i++)
+  for(int i = 0; i < nblocks; i+=4)
+  {
+    __mm512i k = _mm512_set_epi64(getblock64(blocks,i*2+7), getblock64(blocks,i*2+6), getblock64(blocks,i*2+5), getblock64(blocks,i*2+4), getblock64(blocks,i*2+3), getblock64(blocks,i*2+2), getblock64(blocks,i*2+1), getblock64(blocks,i*2+0));
+    k = _mm512_mask_mullox_epi64(k, (__mask8) 255, k, c1c2);
+    k = _mm512_mask_rolv_epi64(k, (__mask8) 255, k, kshifts);
+    k = _mm512_mask_mullox_epi64(k, (__mask8) 255, k, c2c1);
+
+    for(int j = 0; j < 4; j++) 
+    {
+      __m128i k1k2 = _mm512_extracti64x2_epi64(k, j);
+      uint64_t k1 = _mm_extract_epi64(k1k2, 0);
+      uint64_t k2 = _mm_extract_epi64(k1k2, 1);
+      h1 ^= k1; h1 = ROTL64(h1,27); h1 += h2; h1 = h1*5+0x52dce729;
+      h2 ^= k2; h2 = ROTL64(h2,31); h2 += h1; h2 = h2*5+0x38495ab5;
+    }
+  }
+
+  for(i=i-3; i < nblocks; i++)
   {
     uint64_t k1 = getblock64(blocks,i*2+0);
     uint64_t k2 = getblock64(blocks,i*2+1);
 
-    k1 *= c1; k1  = ROTL64(k1,31); k1 *= c2; h1 ^= k1;
+    k1 *= c1; k1  = ROTL64(k1,31); k1 *= c2;
+    k2 *= c2; k2  = ROTL64(k2,33); k2 *= c1;
 
-    h1 = ROTL64(h1,27); h1 += h2; h1 = h1*5+0x52dce729;
-
-    k2 *= c2; k2  = ROTL64(k2,33); k2 *= c1; h2 ^= k2;
-
-    h2 = ROTL64(h2,31); h2 += h1; h2 = h2*5+0x38495ab5;
+    h1 ^= k1; h1 = ROTL64(h1,27); h1 += h2; h1 = h1*5+0x52dce729;
+    h2 ^= k2; h2 = ROTL64(h2,31); h2 += h1; h2 = h2*5+0x38495ab5;
   }
 
   //----------
